@@ -11,7 +11,7 @@ filepath_name = '/Users/albert'
 # Cleanup function
 def clear_scene():
     # Remove existing collection
-    for collection in bpy.data.collections:  
+    for collection in bpy.data.collections:
         if collection:
             for obj in collection.objects:
                 bpy.data.objects.remove(obj, do_unlink=True)
@@ -22,9 +22,15 @@ def clear_scene():
     bpy.ops.object.select_all(action='SELECT')
     bpy.ops.object.delete()
     
-clear_scene()    
+clear_scene()
 #setup_cam(bpy.context.scene)
+
 bpy.ops.mesh.shape_generator()
+bpy.data.collections["Generated Shape Collection"].shape_generator_properties.is_bevel = True
+bpy.data.collections["Generated Shape Collection"].shape_generator_properties.bevel_segments = 10
+bpy.data.collections["Generated Shape Collection"].shape_generator_properties.amount = 4
+bpy.data.collections["Generated Shape Collection"].shape_generator_properties.bevel_clamp_overlap = True
+
 
 # Create a new collection and move imported objects
 collection = bpy.data.collections['Generated Shape Collection']
@@ -61,13 +67,9 @@ scene.render.film_transparent = True  # Enable transparent background
 shapeGenObj = bpy.data.objects['Generated Shape']
 #rotate_around_world(shapeGenObj, 'X', rotation_increment)
 
-#shapeGenObj.rotatation_euler = (value=0.813503, orient_axis='Y', orient_type='GLOBAL', orient_matrix=((1, 0, 0), (0, 1, 0), (0, 0, 1)), orient_matrix_type='GLOBAL', constraint_axis=(False, True, False), mirror=False, use_proportional_edit=False, proportional_edit_falloff='SMOOTH', proportional_size=1, use_proportional_connected=False, use_proportional_projected=False, snap=False, snap_elements={'INCREMENT'}, use_snap_project=False, snap_target='CLOSEST', use_snap_self=True, use_snap_edit=True, use_snap_nonedit=True, use_snap_selectable=False, release_confirm=True)
-
-#bpy.ops.object.select_all(action='SELECT')
-#bpy.ops.object.mode_set(mode = 'OBJECT')
-shapeGenObj.rotation_euler = (math.radians(90), 0, 0)
+shapeGenObj.rotation_euler = (math.radians(90), math.radians(45), math.radians(45))
 
 
 # Initial render before rotation
 scene.render.filepath = f"{filepath_name}/sample.png"
-#bpy.ops.render.render(write_still=True)
+bpy.ops.render.render(write_still=True)r
