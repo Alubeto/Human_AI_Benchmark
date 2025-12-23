@@ -3,6 +3,7 @@ import math
 import random
 from mathutils import Matrix, Vector
 import sys
+import os  # Added for directory handling
 
 # -----------------------------------------------------------------------------
 # CONFIGURATION
@@ -11,13 +12,21 @@ collection_name = "ImportedMeshes"
 rotation_increment = math.radians(15)  # 15 degrees per step
 loop = 7  # Number of random rotations to perform
 
-# Paths (Adjust as needed)
+# Paths
 filepath_name = '/Users/albert' 
-relative_path = '02924116/1ca19240b42fd2f049d40c74f2720fb1'
+relative_path = '03211117/87882e55a8914e78a3cb15c59bd3ecf2'
 obj_path = f'{filepath_name}/.cache/huggingface/hub/datasets--ShapeNet--ShapeNetCore/blobs/{relative_path}/models/model_normalized.obj'
-output_path = '/Users/albert/Dec18'
+
+# DYNAMIC OUTPUT PATH SETUP
+# This sets the output to: [Current Terminal Directory]/test
+current_dir = os.getcwd()
+output_path = os.path.join(current_dir, "test")
+
+# Create the directory if it doesn't exist
+os.makedirs(output_path, exist_ok=True)
 
 print(f"Loading OBJ file from: {obj_path}")
+print(f"Saving renders to: {output_path}")
 
 # -----------------------------------------------------------------------------
 # UTILITY FUNCTIONS
@@ -169,7 +178,7 @@ track.up_axis = 'UP_Y'
 rotation_order_str = "base"
 
 # Initial render (Canonical View)
-scene.render.filepath = f"{output_path}/sample_{rotation_order_str}.png"
+scene.render.filepath = os.path.join(output_path, f"sample_{rotation_order_str}.png")
 bpy.ops.render.render(write_still=True)
 print(f"Rendered base view")
 
@@ -189,7 +198,7 @@ for i in range(1, loop):
     rotate_around_origin(parent_empty, axis, angle)
 
     # Render
-    scene.render.filepath = f"{output_path}/sample_{rotation_order_str}.png"
+    scene.render.filepath = os.path.join(output_path, f"sample_{rotation_order_str}.png")
     bpy.ops.render.render(write_still=True)
     print(f"Rendered step {i}: {rotation_order_str}")
 
