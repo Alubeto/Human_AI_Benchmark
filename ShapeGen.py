@@ -26,6 +26,7 @@ clear_scene()
 #setup_cam(bpy.context.scene)
 
 bpy.ops.mesh.shape_generator()
+bpy.data.collections["Generated Shape Collection"].shape_generator_properties.random_seed = 97
 bpy.data.collections["Generated Shape Collection"].shape_generator_properties.is_bevel = True
 bpy.data.collections["Generated Shape Collection"].shape_generator_properties.bevel_segments = 10
 bpy.data.collections["Generated Shape Collection"].shape_generator_properties.amount = 4
