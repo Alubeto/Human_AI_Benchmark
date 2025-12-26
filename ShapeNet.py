@@ -1,64 +1,31 @@
 import bpy
 import math
 import random
-from mathutils import Matrix, Vector
-import sys
-import os  # Added for directory handling
+from mathutils import Matrix, Vector, Euler
+import os
+
 
 # -----------------------------------------------------------------------------
-# CONFIGURATION
-# -----------------------------------------------------------------------------
-collection_name = "ImportedMeshes"
-rotation_increment = math.radians(15)  # 15 degrees per step
-loop = 7  # Number of random rotations to perform
-
-# Paths
-filepath_name = '/Users/albert' 
-relative_path = '03211117/87882e55a8914e78a3cb15c59bd3ecf2'
-obj_path = f'{filepath_name}/.cache/huggingface/hub/datasets--ShapeNet--ShapeNetCore/blobs/{relative_path}/models/model_normalized.obj'
-
-# DYNAMIC OUTPUT PATH SETUP
-# This sets the output to: [Current Terminal Directory]/test
-current_dir = os.getcwd()
-output_path = os.path.join(current_dir, "test")
-
-# Create the directory if it doesn't exist
-os.makedirs(output_path, exist_ok=True)
-
-print(f"Loading OBJ file from: {obj_path}")
-print(f"Saving renders to: {output_path}")
-
-# -----------------------------------------------------------------------------
-# UTILITY FUNCTIONS
+# HELPER FUNCTIONS
 # -----------------------------------------------------------------------------
 
 def clear_scene():
-    """Removes existing imported collection and clears the scene."""
-    collection = bpy.data.collections.get(collection_name)
-    if collection:
-        for obj in collection.objects:
-            bpy.data.objects.remove(obj, do_unlink=True)
-        bpy.data.collections.remove(collection)
-    
-    # Select all and delete (clears default cube, lights, etc.)
+    """Clears everything: Meshes, Lights, Cameras."""
     bpy.ops.object.select_all(action='SELECT')
     bpy.ops.object.delete()
+    
+    # Purge orphan data
+    for block in bpy.data.meshes: bpy.data.meshes.remove(block)
+    for block in bpy.data.materials: bpy.data.materials.remove(block)
+    for block in bpy.data.textures: bpy.data.textures.remove(block)
+    for block in bpy.data.images: bpy.data.images.remove(block)
 
-def recalculate_normals(obj):
-    """Fixes normal orientation for meshes."""
-    if obj.type == 'MESH':
-        bpy.context.view_layer.objects.active = obj
-        bpy.ops.object.mode_set(mode='EDIT')
-        bpy.ops.mesh.select_all(action='SELECT')
-        bpy.ops.mesh.normals_make_consistent(inside=False)
-        bpy.ops.object.mode_set(mode='OBJECT')
-
-def get_collection_center(collection):
-    """Calculates the center of mass of all meshes in a collection."""
+def get_collection_center(objects):
+    """Calculates the center of mass (Average of all Vertices)."""
     total_center = Vector((0, 0, 0))
     total_vertices = 0
     
-    for obj in collection.objects:
+    for obj in objects:
         if obj.type == 'MESH':
             world_matrix = obj.matrix_world
             for v in obj.data.vertices:
@@ -70,136 +37,181 @@ def get_collection_center(collection):
         return total_center / total_vertices
     return Vector((0, 0, 0))
 
-def rotate_around_origin(obj, axis_name, angle_radians):
-    """
-    Rotates an object around the World Origin (0,0,0) accumulating the rotation.
-    This works perfectly if the object has been centered at (0,0,0).
-    """
+def rotate_pivot_locally(angle_rad, axis_name):
+    # Standard World Axes (Fixed)
     axis_map = {
         'X': Vector((1, 0, 0)),
         'Y': Vector((0, 1, 0)),
         'Z': Vector((0, 0, 1))
     }
-    rotation_axis = axis_map[axis_name]
+    vec = axis_map[axis_name]
+    rot_mat = Matrix.Rotation(angle_rad, 4, vec)
     
-    # Create rotation matrix
-    rot_matrix = Matrix.Rotation(angle_radians, 4, rotation_axis)
+    # GLOBAL ROTATION: Put rot_mat FIRST
+    # This applies the rotation along the fixed World Axis
+    parent_empty.matrix_world = rot_mat @ parent_empty.matrix_world
     
-    # Apply rotation: New = Rotation @ Old
-    obj.matrix_world = rot_matrix @ obj.matrix_world
-
+    # Ensure it stays at center
+    parent_empty.location = Vector((0,0,0))
+    
 # -----------------------------------------------------------------------------
-# MAIN EXECUTION
+# RENDER LOGIC
 # -----------------------------------------------------------------------------
+def process_model(relative_path, rotation_degree):
+    loop = 7
+    clear_scene()
 
-# 1. Setup Scene
-clear_scene()
+    # 2. Import
+    print(f"Loading OBJ: {obj_path}")
+    bpy.ops.wm.obj_import(
+        filepath=bpy.path.abspath(obj_path),
+        use_split_objects=True,
+        use_split_groups=True,
+        validate_meshes=False
+    )
 
-# 2. Import OBJ
-bpy.ops.wm.obj_import(
-    filepath=bpy.path.abspath(obj_path),
-    use_split_objects=True,
-    use_split_groups=True,
-    validate_meshes=False
-)
+    imported_objects = [o for o in bpy.context.selected_objects if o.type == 'MESH']
 
-# 3. Organize Collection
-new_collection = bpy.data.collections.new(collection_name)
-bpy.context.scene.collection.children.link(new_collection)
-for obj in bpy.data.objects:
-    if obj.users_collection: # Unlink from default collections
-        for c in obj.users_collection:
-            c.objects.unlink(obj)
-    new_collection.objects.link(obj)
+    # 3. Organize Collection
+    new_collection = bpy.data.collections.new(collection_name)
+    bpy.context.scene.collection.children.link(new_collection)
+    for obj in imported_objects:
+        if obj.users_collection:
+            for c in obj.users_collection:
+                c.objects.unlink(obj)
+        new_collection.objects.link(obj)
 
-# 4. Fix Normals & Calculate Center
-for obj in new_collection.objects:
-    if obj.type == 'MESH':
-        recalculate_normals(obj)
+    # 4. CENTER ONLY (No Flip)
+    print("Normalizing Object Position...")
+    c1 = get_collection_center(imported_objects)
+    for obj in imported_objects:
+        obj.matrix_world = Matrix.Translation(-c1) @ obj.matrix_world
 
-# Calculate where the object currently is
-current_mass_center = get_collection_center(new_collection)
-print(f"Original Center of Mass: {current_mass_center}")
+    print("Object Centered.")
 
-# 5. CENTER TO WORLD ORIGIN (The 'Justification' Step)
-# We move all objects by the inverse of their mass center.
-offset_vector = -current_mass_center
-for obj in new_collection.objects:
-    obj.matrix_world = Matrix.Translation(offset_vector) @ obj.matrix_world
+    # 5. PARENTING
+    world_origin = Vector((0, 0, 0))
+    bpy.ops.object.empty_add(type='PLAIN_AXES', location=world_origin)
+    parent_empty = bpy.context.object
+    parent_empty.name = "RotationPivot"
 
-# Now the "Mass Center" is effectively (0,0,0)
-world_origin = Vector((0, 0, 0))
+    # Parent the OBJECTS to the empty
+    for obj in imported_objects:
+        obj.parent = parent_empty
 
-# 6. Create Control Empty at Origin
-bpy.ops.object.empty_add(type='PLAIN_AXES', location=world_origin)
-parent_empty = bpy.context.object
-parent_empty.name = "WorldRotationPivot"
-
-# Parent objects to this empty
-for obj in new_collection.objects:
-    obj.parent = parent_empty
-
-# 7. Rendering Setup (Workbench)
-scene = bpy.context.scene
-scene.render.engine = 'BLENDER_WORKBENCH'
-scene.render.resolution_x = 1080
-scene.render.resolution_y = 1080
-scene.display.shading.light = 'STUDIO'
-scene.display.shading.color_type = 'MATERIAL'
-scene.display.shading.background_type = 'WORLD'
-scene.display.shading.show_backface_culling = True
-scene.render.film_transparent = True
-
-# 8. Camera Setup (Looking at 0,0,0)
-if not any(o for o in scene.objects if o.type == 'CAMERA'):
+    # 6. CAMERA SETUP (Strictly -Y)
     bpy.ops.object.camera_add()
     camera = bpy.context.object
+    scene = bpy.context.scene
     scene.camera = camera
+    camera.location = Vector((0, -3.0, 0))
+    camera.rotation_euler = Euler((math.radians(90), 0, 0), 'XYZ')
 
-# Position camera
-camera_distance = 3.0
-camera.location = world_origin + Vector((0, -camera_distance, 0))
-camera.rotation_euler = (math.radians(90), 0, 0) # Face forward
+    # 7. RENDER SETTINGS
+    scene.render.engine = 'BLENDER_WORKBENCH'
+    scene.render.resolution_x = 512
+    scene.render.resolution_y = 512
+    scene.display.shading.light = 'STUDIO'
+    scene.display.shading.color_type = 'MATERIAL'
+    scene.display.shading.show_backface_culling = False
+    scene.render.film_transparent = True
 
-# Track the World Origin
-bpy.ops.object.empty_add(type='PLAIN_AXES', location=world_origin)
-target_empty = bpy.context.object
-target_empty.name = "CameraTarget"
+    # -----------------------------------------------------------------------------
+    # RANDOM SEED SETUP
+    # -----------------------------------------------------------------------------
+    # Extract the unique model ID (e.g. 'a851...721') from the path
+    model_id_str = relative_path.split('/')[-1]
 
-track = camera.constraints.new(type='TRACK_TO')
-track.target = target_empty
-track.track_axis = 'TRACK_NEGATIVE_Z'
-track.up_axis = 'UP_Y'
+    # Convert the last 6 characters of the hex string to an integer
+    # This ensures every unique model gets a unique seed.
+    try:
+        # int('7b721', 16) -> converts hex to int
+        model_id_int = int(model_id_str[-6:], 16)
+    except:
+        # Fallback if path is weird
+        model_id_int = 12345
+    # Add the rotation angle to the seed to avoid same image set rotation order is fixed
+    # Using degrees (45) instead of radians to keep the number clean
+    seed_val = model_id_int + int(math.degrees(rotation_increment))
+    random.seed(seed_val)
+    # -----------------------------------------------------------------------------
+    # RENDER LOOP
+    # -----------------------------------------------------------------------------
+    rotation_order_str = "base"
 
-# -----------------------------------------------------------------------------
-# RENDER LOOP
-# -----------------------------------------------------------------------------
-
-rotation_order_str = "base"
-
-# Initial render (Canonical View)
-scene.render.filepath = os.path.join(output_path, f"sample_{rotation_order_str}.png")
-bpy.ops.render.render(write_still=True)
-print(f"Rendered base view")
-
-# Perform Incremental Rotations
-for i in range(1, loop):
-    # Select random axis and direction
-    axis = random.choice(['X', 'Y', 'Z'])
-    direction = random.choice([-1, 1])
-    angle = direction * rotation_increment
-
-    # Update naming
-    rot_symbol = f"{'-' if direction == -1 else ''}{axis}"
-    rotation_order_str += f"_{rot_symbol}"
-
-    # Apply rotation to the PARENT EMPTY
-    # Since the empty is at (0,0,0) and holds the object, this rotates the object around its center.
-    rotate_around_origin(parent_empty, axis, angle)
-
-    # Render
-    scene.render.filepath = os.path.join(output_path, f"sample_{rotation_order_str}.png")
+    scene.render.filepath = os.path.join(output_path, f"{rotation_order_str}.png")
     bpy.ops.render.render(write_still=True)
-    print(f"Rendered step {i}: {rotation_order_str}")
+    print(f"Rendered: {rotation_order_str}")
 
-print("Rendering complete!")
+    for i in range(1, loop):
+        axis = random.choice(['X', 'Y', 'Z'])
+        direction = random.choice([-1, 1])
+        angle = direction * rotation_increment
+
+        rot_symbol = f"{'-' if direction == -1 else ''}{axis}"
+        rotation_order_str += f"_{rot_symbol}"
+
+        rotate_pivot_locally(angle, axis)
+        
+        scene.render.filepath = os.path.join(output_path, f"{rotation_order_str}.png")
+        bpy.ops.render.render(write_still=True)
+        print(f"Rendered step {i}: {rotation_order_str}")
+
+# -----------------------------------------------------------------------------
+# CONFIGURATION
+# -----------------------------------------------------------------------------
+collection_name = "ImportedMeshes"
+BASE_OUTPUT_DIR = os.path.join(os.getcwd(), "test")
+INPUT_FILE_NAME = "directory.txt"
+
+# Paths
+filepath_name = '/Users/albert'
+relative_path = '03325088/a851047aeb3793403ca0c4be71e7b721'
+obj_path = f'{filepath_name}/.cache/huggingface/hub/datasets--ShapeNet--ShapeNetCore/blobs/{relative_path}/models/model_normalized.obj'
+
+current_dir = os.getcwd()
+output_path = os.path.join(current_dir, "test","5")
+os.makedirs(output_path, exist_ok=True)
+
+
+# -----------------------------------------------------------------------------
+# MAIN ENTRY POINT
+# -----------------------------------------------------------------------------
+if __name__ == "__main__":
+    
+    if "--" in sys.argv:
+        args = sys.argv[sys.argv.index("--") + 1:]
+    else:
+        args = []
+
+    if len(args) < 1:
+        print("❌ Error: Missing Rotation Degree.")
+        print("Usage: blender -b -P ShapeNet.py -- <DEGREE>")
+        sys.exit(1)
+    
+    try:
+        rotation_input = float(args[0])
+    except ValueError:
+        print("❌ Error: Rotation degree must be a number.")
+        sys.exit(1)
+
+    current_cwd = os.getcwd()
+    file_list_path = os.path.join(current_cwd, INPUT_FILE_NAME)
+
+    print(f"🚀 Starting Batch | Rotation: {rotation_input}°")
+    
+    if not os.path.exists(file_list_path):
+        print(f"❌ Error: '{INPUT_FILE_NAME}' not found in {current_cwd}")
+        sys.exit(1)
+
+    with open(file_list_path, 'r') as f:
+        lines = [line.strip() for line in f if line.strip()]
+
+    total_models = len(lines)
+    print(f"📂 Found {total_models} models.")
+
+    for i, line in enumerate(lines):
+        print(f"[{i+1}/{total_models}] Processing...")
+        process_model(line, rotation_input)
+
+    print("🎉 All tasks completed.")
